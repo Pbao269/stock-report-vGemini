@@ -17,8 +17,11 @@ A Streamlit web app that combines real-time stock analysis and report with AI-ge
 
 - Python 3.9+
 - pip (Python package installer)
+- Docker and Docker Compose (for containerized deployment)
 
 ### Installation
+
+#### Option 1: Standard Installation
 
 1. Clone this repository:
    ```bash
@@ -50,7 +53,40 @@ A Streamlit web app that combines real-time stock analysis and report with AI-ge
    pip install -r requirements-frontend.txt
    ```
 
+#### Option 2: Docker Installation
+
+1. Clone this repository:
+   ```bash
+   git clone https://github.com/yourusername/stock_report.git
+   cd stock_report
+   ```
+
+2. Build and start the Docker containers:
+   ```bash
+   docker-compose up -d
+   ```
+
+3. The backend will be available at http://localhost:5000
+
+### Configuration
+
+1. Edit the `.env` file to configure your environment:
+   ```
+   # Development URLs
+   BACKEND_URL_DEV=http://localhost:3000
+   FRONTEND_URL_DEV=http://localhost:3001
+   
+   # Production URLs
+   BACKEND_URL_PROD=https://api.stockreport.example.com
+   FRONTEND_URL_PROD=https://fin-crack-frontend.vercel.app
+   
+   # Set to 'production' in production environment
+   FLASK_ENV=development
+   ```
+
 ### Running the Application
+
+#### Standard Method
 
 1. Make sure your virtual environment is activated.
 
@@ -71,6 +107,23 @@ A Streamlit web app that combines real-time stock analysis and report with AI-ge
 
 4. Open your browser and navigate to http://localhost:8501
 
+#### Docker Method
+
+1. Start the services:
+   ```bash
+   docker-compose up -d
+   ```
+
+2. To view logs:
+   ```bash
+   docker-compose logs -f
+   ```
+
+3. To stop the services:
+   ```bash
+   docker-compose down
+   ```
+
 ## Troubleshooting
 
 ### Yahoo Finance API Issues
@@ -87,6 +140,12 @@ If you encounter errors like "No price data found, symbol may be delisted" when 
 3. **Rate Limiting**: Yahoo Finance may rate-limit excessive requests. The application includes a retry mechanism, but you may need to wait between queries if you're making many requests.
 
 4. **Proxy Settings**: If you're behind a corporate firewall, check your proxy settings or try using the application on a different network.
+
+### Docker Issues
+
+1. **Port conflicts**: If port 5000 is already in use, modify the port mapping in `docker-compose.yml`.
+
+2. **Permission issues**: Ensure Docker has permission to access the required files.
 
 ### Virtual Environment Issues
 
@@ -121,6 +180,8 @@ If you encounter errors like "No price data found, symbol may be delisted" when 
 - pandas: Data manipulation
 - yfinance: Yahoo Finance API client
 - google-generativeai: Google Gemini API client
+- flask-cors: Cross-Origin Resource Sharing support
+- gunicorn: WSGI HTTP Server for production
 
 ### Frontend
 - Streamlit: Interactive web application framework

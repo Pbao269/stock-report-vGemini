@@ -6,8 +6,15 @@ import google.generativeai as genai
 import re
 import time
 from datetime import datetime, timedelta
+from flask import Flask, request, jsonify, send_file, redirect
 from flask_cors import CORS
 from dotenv import load_dotenv
+
+# Explicitly define what symbols should be exported when using "from backend_code import *"
+__all__ = ['app']
+
+# Load environment variables
+load_dotenv()
 
 # Load ticker mappings from JSON
 with open("ticker.json", "r") as f:
@@ -193,71 +200,113 @@ def get_stock_data(ticker, window):
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-# If running this file directly as an API (using Flask)
-if __name__ == "__main__":
-    from flask import Flask, request, jsonify, send_file, redirect
-    from flask_cors import CORS
+# Create Flask app instance at the module level
+app = Flask(__name__)
+
+# Get environment variables with defaults
+BACKEND_URL_DEV = os.getenv('BACKEND_URL_DEV', 'http://localhost:5000')
+FRONTEND_URL_DEV = os.getenv('FRONTEND_URL_DEV', 'http://localhost:3001')
+BACKEND_URL_PROD = os.getenv('BACKEND_URL_PROD', 'https://api.stockreport.example.com')
+FRONTEND_URL_PROD = os.getenv('FRONTEND_URL_PROD', 'https://fin-crack-frontend.vercel.app')
+
+# Determine if we're in production
+IS_PRODUCTION = os.getenv('FLASK_ENV') == 'production'
+
+# Set allowed origins based on environment
+if IS_PRODUCTION:
+    allowed_origins = [FRONTEND_URL_PROD, "*"]
+else:
+    allowed_origins = [
+        FRONTEND_URL_DEV,
+        'http://localhost:3000',  # For compatibility
+        'http://127.0.0.1:3000',  # For compatibility
+        'http://localhost:3001',
+        'http://127.0.0.1:3001',
+        "*"  # Allow all origins
+    ]
+
+# Enable CORS with environment-specific origins
+CORS(app, resources={
+    r"/api/*": {"origins": allowed_origins},
+    r"/*": {"origins": allowed_origins}
+})
+
+# Print server info
+print(f"Server running in {'production' if IS_PRODUCTION else 'development'} mode")
+print(f"CORS allowed origins: {allowed_origins}")
+
+@app.route('/api/stock_data', methods=['POST'])
+def api_stock_data():
+    data = request.json
+    company_input = data.get('company_input', '')
+    window = data.get('window', 14)
     
-    # Load environment variables from .env file
-    load_dotenv()
+    try:
+        ticker = get_ticker_from_name(company_input)
+        result = get_stock_data(ticker, window) # get_stock_data now returns JSON directly
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+# Route without /api/ prefix for backward compatibility
+@app.route('/multi_stock_metrics', methods=['POST'])
+def multi_stock_metrics_redirect():
+    return api_multi_stock_metrics()
+
+@app.route('/api/stock_metrics', methods=['POST'])
+def api_stock_metrics():
+    data = request.json
+    company_input = data.get('company_input', '')
     
-    # Get environment variables with defaults
-    BACKEND_URL_DEV = os.getenv('BACKEND_URL_DEV', 'http://localhost:3000')
-    FRONTEND_URL_DEV = os.getenv('FRONTEND_URL_DEV', 'http://localhost:3001')
-    BACKEND_URL_PROD = os.getenv('BACKEND_URL_PROD', 'https://api.stockreport.example.com')
-    FRONTEND_URL_PROD = os.getenv('FRONTEND_URL_PROD', 'https://stockreport.example.com')
-    
-    # Determine if we're in production
-    IS_PRODUCTION = os.getenv('FLASK_ENV') == 'production'
-    
-    # Set allowed origins based on environment
-    if IS_PRODUCTION:
-        allowed_origins = [FRONTEND_URL_PROD, BACKEND_URL_PROD]
-    else:
-        allowed_origins = [
-            FRONTEND_URL_DEV,
-            BACKEND_URL_DEV,
-            'http://localhost:3000',
-            'http://127.0.0.1:3000',
-            'http://localhost:3001',
-            'http://127.0.0.1:3001'
-        ]
-    
-    app = Flask(__name__)
-    # Enable CORS with environment-specific origins
-    CORS(app, resources={
-        r"/api/*": {"origins": allowed_origins},
-        r"/*": {"origins": allowed_origins}
-    })
-    
-    print(f"Server running in {'production' if IS_PRODUCTION else 'development'} mode")
-    print(f"CORS allowed origins: {allowed_origins}")
-    
-    @app.route('/api/stock_data', methods=['POST'])
-    def api_stock_data():
-        data = request.json
-        company_input = data.get('company_input', '')
-        window = data.get('window', 14)
+    try:
+        # Convert company name to ticker if needed
+        ticker = get_ticker_from_name(company_input)
         
-        try:
-            ticker = get_ticker_from_name(company_input)
-            result = get_stock_data(ticker, window) # get_stock_data now returns JSON directly
-            return jsonify(result)
-        except Exception as e:
-            return jsonify({"success": False, "error": str(e)})
-    
-    # Route without /api/ prefix for backward compatibility
-    @app.route('/multi_stock_metrics', methods=['POST'])
-    def multi_stock_metrics_redirect():
-        return api_multi_stock_metrics()
-    
-    # Removed the download_file endpoint as it's no longer needed
-    
-    @app.route('/api/stock_metrics', methods=['POST'])
-    def api_stock_metrics():
-        data = request.json
-        company_input = data.get('company_input', '')
+        # Get historical price data
+        hist_data = get_stock_data_with_retry(ticker)
         
+        # Get current price
+        current_price = round(hist_data.iloc[-1].Close, 2)
+        
+        # Get fundamental data
+        fundamentals = get_fundamentals(ticker)
+        
+        # Calculate RSI
+        rsi = calculate_RSI(ticker)
+        
+        # Calculate MACD
+        macd, signal, hist = calculate_MACD(ticker)
+        
+        # Build the response
+        result = {
+            "success": True,
+            "ticker": ticker,
+            "currentPrice": current_price,
+            "PE": fundamentals.get("pe_ratio", "N/A"),
+            "PB": fundamentals.get("pb_ratio", "N/A"),
+            "PEG": fundamentals.get("trailing_peg_ratio", "N/A"),
+            "PS": fundamentals.get("ps_ratio", "N/A"),
+            "ROE": fundamentals.get("roe", "N/A"),
+            "RSI": round(rsi, 2) if isinstance(rsi, (int, float)) else "N/A",
+            "MACDLine": round(macd, 2) if isinstance(macd, (int, float)) else "N/A"
+        }
+        
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+@app.route('/api/multi_stock_metrics', methods=['POST'])
+def api_multi_stock_metrics():
+    data = request.json
+    company_inputs = data.get('company_inputs', [])
+    
+    if not company_inputs or not isinstance(company_inputs, list):
+        return jsonify({"success": False, "error": "Please provide a list of company inputs in the 'company_inputs' field"})
+    
+    results = {}
+    overall_success = False
+    
+    for company_input in company_inputs:
         try:
             # Convert company name to ticker if needed
             ticker = get_ticker_from_name(company_input)
@@ -277,8 +326,8 @@ if __name__ == "__main__":
             # Calculate MACD
             macd, signal, hist = calculate_MACD(ticker)
             
-            # Build the response
-            result = {
+            # Add to results
+            results[ticker] = {
                 "success": True,
                 "ticker": ticker,
                 "currentPrice": current_price,
@@ -291,100 +340,53 @@ if __name__ == "__main__":
                 "MACDLine": round(macd, 2) if isinstance(macd, (int, float)) else "N/A"
             }
             
-            return jsonify(result)
+            overall_success = True
         except Exception as e:
-            return jsonify({"success": False, "error": str(e)})
-
-    @app.route('/api/multi_stock_metrics', methods=['POST'])
-    def api_multi_stock_metrics():
-        data = request.json
-        company_inputs = data.get('company_inputs', [])
-        
-        if not company_inputs or not isinstance(company_inputs, list):
-            return jsonify({"success": False, "error": "Please provide a list of company inputs in the 'company_inputs' field"})
-        
-        results = {}
-        overall_success = False
-        
-        for company_input in company_inputs:
-            try:
-                # Convert company name to ticker if needed
-                ticker = get_ticker_from_name(company_input)
-                
-                # Get historical price data
-                hist_data = get_stock_data_with_retry(ticker)
-                
-                # Get current price
-                current_price = round(hist_data.iloc[-1].Close, 2)
-                
-                # Get fundamental data
-                fundamentals = get_fundamentals(ticker)
-                
-                # Calculate RSI
-                rsi = calculate_RSI(ticker)
-                
-                # Calculate MACD
-                macd, signal, hist = calculate_MACD(ticker)
-                
-                # Add to results
-                results[ticker] = {
-                    "success": True,
-                    "ticker": ticker,
-                    "currentPrice": current_price,
-                    "PE": fundamentals.get("pe_ratio", "N/A"),
-                    "PB": fundamentals.get("pb_ratio", "N/A"),
-                    "PEG": fundamentals.get("trailing_peg_ratio", "N/A"),
-                    "PS": fundamentals.get("ps_ratio", "N/A"),
-                    "ROE": fundamentals.get("roe", "N/A"),
-                    "RSI": round(rsi, 2) if isinstance(rsi, (int, float)) else "N/A",
-                    "MACDLine": round(macd, 2) if isinstance(macd, (int, float)) else "N/A"
-                }
-                
-                overall_success = True
-            except Exception as e:
-                results[company_input] = {
-                    "success": False,
-                    "error": str(e)
-                }
-        
-        return jsonify({
-            "success": overall_success,  # True if at least one company was processed successfully
-            "data": results
-        })
-    
-    @app.route('/api/simple_metrics/<ticker>', methods=['GET'])
-    def simple_metrics(ticker):
-        try:
-            # Get historical price data
-            hist_data = get_stock_data_with_retry(ticker.upper())
-            
-            # Get current price
-            current_price = round(hist_data.iloc[-1].Close, 2)
-            
-            # Get fundamental data
-            fundamentals = get_fundamentals(ticker.upper())
-            
-            # Calculate RSI
-            rsi = calculate_RSI(ticker.upper())
-            
-            # Calculate MACD
-            macd, signal, hist = calculate_MACD(ticker.upper())
-            
-            # Build the response with only the requested metrics
-            result = {
-                "ticker": ticker.upper(),
-                "latest_price": current_price,
-                "peg_ratio": fundamentals.get("trailing_peg_ratio", "N/A"),
-                "pe_ratio": fundamentals.get("pe_ratio", "N/A"),
-                "pb_ratio": fundamentals.get("pb_ratio", "N/A"),
-                "ps_ratio": fundamentals.get("ps_ratio", "N/A"),
-                "roe": fundamentals.get("roe", "N/A"),
-                "rsi": round(rsi, 2) if isinstance(rsi, (int, float)) else "N/A",
-                "macd_line": round(macd, 2) if isinstance(macd, (int, float)) else "N/A"
+            results[company_input] = {
+                "success": False,
+                "error": str(e)
             }
-            
-            return jsonify(result)
-        except Exception as e:
-            return jsonify({"success": False, "error": str(e)})
     
+    return jsonify({
+        "success": overall_success,  # True if at least one company was processed successfully
+        "data": results
+    })
+
+@app.route('/api/simple_metrics/<ticker>', methods=['GET'])
+def simple_metrics(ticker):
+    try:
+        # Get historical price data
+        hist_data = get_stock_data_with_retry(ticker.upper())
+        
+        # Get current price
+        current_price = round(hist_data.iloc[-1].Close, 2)
+        
+        # Get fundamental data
+        fundamentals = get_fundamentals(ticker.upper())
+        
+        # Calculate RSI
+        rsi = calculate_RSI(ticker.upper())
+        
+        # Calculate MACD
+        macd, signal, hist = calculate_MACD(ticker.upper())
+        
+        # Build the response with only the requested metrics
+        result = {
+            "ticker": ticker.upper(),
+            "latest_price": current_price,
+            "peg_ratio": fundamentals.get("trailing_peg_ratio", "N/A"),
+            "pe_ratio": fundamentals.get("pe_ratio", "N/A"),
+            "pb_ratio": fundamentals.get("pb_ratio", "N/A"),
+            "ps_ratio": fundamentals.get("ps_ratio", "N/A"),
+            "roe": fundamentals.get("roe", "N/A"),
+            "rsi": round(rsi, 2) if isinstance(rsi, (int, float)) else "N/A",
+            "macd_line": round(macd, 2) if isinstance(macd, (int, float)) else "N/A"
+        }
+        
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+# Only run the app if this file is executed directly (not imported)
+if __name__ == "__main__":
     app.run(debug=True, port=5000)

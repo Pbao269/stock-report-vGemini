@@ -1,0 +1,16 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=${FLASK_ENV:-development}
+      - BACKEND_URL_DEV=${BACKEND_URL_DEV:-http://localhost:3000}
+      - FRONTEND_URL_DEV=${FRONTEND_URL_DEV:-http://localhost:3001}
+      - BACKEND_URL_PROD=${BACKEND_URL_PROD:-https://api.stockreport.example.com}
+      - FRONTEND_URL_PROD=${FRONTEND_URL_PROD:-https://fin-crack-frontend.vercel.app}
+    volumes:
+      - ./ticker.json:/app/ticker.json
+    restart: unless-stopped 
