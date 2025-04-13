@@ -7,6 +7,7 @@ import re
 import time
 from datetime import datetime, timedelta
 from flask_cors import CORS
+from dotenv import load_dotenv
 
 # Load ticker mappings from JSON
 with open("ticker.json", "r") as f:
@@ -194,11 +195,43 @@ def get_stock_data(ticker, window):
 
 # If running this file directly as an API (using Flask)
 if __name__ == "__main__":
-    from flask import Flask, request, jsonify, send_file
+    from flask import Flask, request, jsonify, send_file, redirect
+    from flask_cors import CORS
+    
+    # Load environment variables from .env file
+    load_dotenv()
+    
+    # Get environment variables with defaults
+    BACKEND_URL_DEV = os.getenv('BACKEND_URL_DEV', 'http://localhost:3000')
+    FRONTEND_URL_DEV = os.getenv('FRONTEND_URL_DEV', 'http://localhost:3001')
+    BACKEND_URL_PROD = os.getenv('BACKEND_URL_PROD', 'https://api.stockreport.example.com')
+    FRONTEND_URL_PROD = os.getenv('FRONTEND_URL_PROD', 'https://stockreport.example.com')
+    
+    # Determine if we're in production
+    IS_PRODUCTION = os.getenv('FLASK_ENV') == 'production'
+    
+    # Set allowed origins based on environment
+    if IS_PRODUCTION:
+        allowed_origins = [FRONTEND_URL_PROD, BACKEND_URL_PROD]
+    else:
+        allowed_origins = [
+            FRONTEND_URL_DEV,
+            BACKEND_URL_DEV,
+            'http://localhost:3000',
+            'http://127.0.0.1:3000',
+            'http://localhost:3001',
+            'http://127.0.0.1:3001'
+        ]
     
     app = Flask(__name__)
-    # Enable CORS for all routes
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
+    # Enable CORS with environment-specific origins
+    CORS(app, resources={
+        r"/api/*": {"origins": allowed_origins},
+        r"/*": {"origins": allowed_origins}
+    })
+    
+    print(f"Server running in {'production' if IS_PRODUCTION else 'development'} mode")
+    print(f"CORS allowed origins: {allowed_origins}")
     
     @app.route('/api/stock_data', methods=['POST'])
     def api_stock_data():
@@ -212,6 +245,11 @@ if __name__ == "__main__":
             return jsonify(result)
         except Exception as e:
             return jsonify({"success": False, "error": str(e)})
+    
+    # Route without /api/ prefix for backward compatibility
+    @app.route('/multi_stock_metrics', methods=['POST'])
+    def multi_stock_metrics_redirect():
+        return api_multi_stock_metrics()
     
     # Removed the download_file endpoint as it's no longer needed
     
