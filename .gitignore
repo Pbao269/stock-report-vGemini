@@ -1,3 +1,5 @@
+# Add this line if not present
+.env
 venv/
 .env/
 
