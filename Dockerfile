@@ -8,14 +8,19 @@ COPY requirements-backend.txt .
 # Install dependencies
 RUN pip install --no-cache-dir -r requirements-backend.txt
 
-# Copy application code and rename to valid Python module name
+# Copy application code
 COPY backend_code.py .
 COPY ticker.json .
-COPY .env .
+COPY .env.example .env
 COPY wsgi.py .
 
 # Expose port
 EXPOSE 5000
 
+# Set default environment variables
+ENV BACKEND_URL_PROD=https://api.stockreport.example.com
+ENV FRONTEND_URL_PROD=https://fin-crack-frontend.vercel.app
+ENV FLASK_ENV=development
+
 # Run with gunicorn for production
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "wsgi:app"] 
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "wsgi:app"]
