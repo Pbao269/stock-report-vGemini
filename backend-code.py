@@ -202,4 +202,43 @@ if __name__ == "__main__":
         except Exception as e:
             return jsonify({"success": False, "error": str(e)})
     
+    @app.route('/api/stock_metrics', methods=['POST'])
+    def api_stock_metrics():
+        data = request.json
+        company_input = data.get('company_input', '')
+        
+        try:
+            # Convert company name to ticker if needed
+            ticker = get_ticker_from_name(company_input)
+            
+            # Get historical price data
+            hist_data = get_stock_data_with_retry(ticker)
+            
+            # Get current price
+            current_price = round(hist_data.iloc[-1].Close, 2)
+            
+            # Get fundamental data
+            fundamentals = get_fundamentals(ticker)
+            
+            # Calculate RSI
+            rsi = calculate_RSI(ticker)
+            
+            # Calculate MACD
+            macd, signal, hist = calculate_MACD(ticker)
+            
+            # Build the response
+            result = {
+                "success": True,
+                "ticker": ticker,
+                "currentPrice": current_price,
+                "PE": fundamentals.get("pe_ratio", "N/A"),
+                "PB": fundamentals.get("pb_ratio", "N/A"),
+                "RSI": round(rsi, 2) if isinstance(rsi, (int, float)) else "N/A",
+                "MACDhistogram": round(hist, 2) if isinstance(hist, (int, float)) else "N/A"
+            }
+            
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+    
     app.run(debug=True, port=5000)
