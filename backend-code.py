@@ -6,6 +6,7 @@ import google.generativeai as genai
 import re
 import time
 from datetime import datetime, timedelta
+from flask_cors import CORS
 
 # Load ticker mappings from JSON
 with open("ticker.json", "r") as f:
@@ -90,12 +91,20 @@ def get_fundamentals(ticker):
     try:
         stock = yf.Ticker(ticker)
         info = stock.info
+        
+        # Get P/E ratio
+        pe_ratio = info.get("trailingPE")
+        
+        # Get trailing PEG ratio directly from yfinance
+        trailing_peg_ratio = info.get("trailingPegRatio")
+        
+ 
+        
         return {
-            "pe_ratio": info.get("trailingPE", "N/A"),
+            "pe_ratio": pe_ratio if isinstance(pe_ratio, (int, float)) else "N/A",
             "pb_ratio": info.get("priceToBook", "N/A"),
             "ps_ratio": info.get("priceToSalesTrailing12Months", "N/A"),
-            "peg_ratio": info.get("pegRatio", "N/A"),
-            "roa": info.get("returnOnAssets", "N/A"),
+            "trailing_peg_ratio": trailing_peg_ratio if isinstance(trailing_peg_ratio, (int, float)) else "N/A",
             "roe": info.get("returnOnEquity", "N/A")
         }
     except Exception as e:
@@ -105,7 +114,6 @@ def get_fundamentals(ticker):
             "pb_ratio": "N/A",
             "ps_ratio": "N/A",
             "peg_ratio": "N/A",
-            "roa": "N/A",
             "roe": "N/A"
         }
 
@@ -137,57 +145,48 @@ def get_stock_data(ticker, window):
         
         fundamentals = get_fundamentals(ticker)
         
-        # Generate report with Gemini
-        prompt = f"""
-You are a helpful financial assistant. Generate a clean Markdown report for a retail investor. Avoid backslashes or code formatting. Use standard bold headers and readable bullet points.
-
-### {ticker} Stock Analysis
-
-**Valuation & Profitability Metrics:**
-- P/E Ratio: {fundamentals['pe_ratio']}
-- P/B Ratio: {fundamentals['pb_ratio']}
-- P/S Ratio: {fundamentals['ps_ratio']}
-- PEG Ratio: {fundamentals['peg_ratio']}
-- Return on Assets (ROA): {fundamentals['roa']}
-- Return on Equity (ROE): {fundamentals['roe']}
-
-**Technical Indicators:**
-- Latest Price: ${price}
-- {window}-day SMA: {sma}
-- {window}-day EMA: {ema}
-- RSI: {rsi}
-- MACD Line: {macd_val}
-- MACD Signal Line: {signal_line}
-- MACD Histogram: {macd_hist}
-"""
-
-        response = model.generate_content(
-            contents=[{"role": "user", "parts": [{"text": prompt}]}],
-            generation_config={"temperature": 0}
-        )
+        # Create metrics data JSON
+        metrics_data = {
+            "valuation_and_profitability": {
+                "pe_ratio": fundamentals['pe_ratio'],
+                "pb_ratio": fundamentals['pb_ratio'],
+                "ps_ratio": fundamentals['ps_ratio'],
+                "peg_ratio": fundamentals['trailing_peg_ratio'],
+                "roe": fundamentals['roe']
+            },
+            "technical_indicators": {
+                "latest_price": price,
+                "rsi": rsi,
+                "macd_line": macd_val,
+            }
+        }
         
-        # Prepare chart data
-        chart_data = hist_data.copy()
-        chart_data['SMA'] = chart_data['Close'].rolling(window=window).mean()
-        chart_data['EMA'] = chart_data['Close'].ewm(span=window, adjust=False).mean()
-        chart_data = chart_data.reset_index()
-        chart_data['Date'] = chart_data['Date'].dt.strftime('%Y-%m-%d')
+        # Prepare historical data for chart
+        historical_data = hist_data.copy()
+        historical_data['SMA'] = historical_data['Close'].rolling(window=window).mean()
+        historical_data['EMA'] = historical_data['Close'].ewm(span=window, adjust=False).mean()
+        historical_data = historical_data.reset_index()
+        
+        # Convert datetime to string for JSON serialization
+        historical_data['Date'] = historical_data['Date'].dt.strftime('%Y-%m-%d')
+        chart_data = historical_data[['Date', 'Close', 'SMA', 'EMA']].to_dict('records')
         
         return {
-            "report": response.text,
-            "chart_data": chart_data[['Date', 'Close', 'SMA', 'EMA']].to_dict('records'),
+            "success": True,
             "ticker": ticker,
-            "price": price,
-            "success": True
+            "metrics_data": metrics_data,
+            "chart_data": chart_data
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
 
 # If running this file directly as an API (using Flask)
 if __name__ == "__main__":
-    from flask import Flask, request, jsonify
+    from flask import Flask, request, jsonify, send_file
     
     app = Flask(__name__)
+    # Enable CORS for all routes
+    CORS(app, resources={r"/api/*": {"origins": "*"}})
     
     @app.route('/api/stock_data', methods=['POST'])
     def api_stock_data():
@@ -197,10 +196,12 @@ if __name__ == "__main__":
         
         try:
             ticker = get_ticker_from_name(company_input)
-            result = get_stock_data(ticker, window)
+            result = get_stock_data(ticker, window) # get_stock_data now returns JSON directly
             return jsonify(result)
         except Exception as e:
             return jsonify({"success": False, "error": str(e)})
+    
+    # Removed the download_file endpoint as it's no longer needed
     
     @app.route('/api/stock_metrics', methods=['POST'])
     def api_stock_metrics():
@@ -233,8 +234,46 @@ if __name__ == "__main__":
                 "currentPrice": current_price,
                 "PE": fundamentals.get("pe_ratio", "N/A"),
                 "PB": fundamentals.get("pb_ratio", "N/A"),
+                "PEG": fundamentals.get("trailing_peg_ratio", "N/A"),
+                "PS": fundamentals.get("ps_ratio", "N/A"),
+                "ROE": fundamentals.get("roe", "N/A"),
                 "RSI": round(rsi, 2) if isinstance(rsi, (int, float)) else "N/A",
-                "MACDhistogram": round(hist, 2) if isinstance(hist, (int, float)) else "N/A"
+                "MACDLine": round(macd, 2) if isinstance(macd, (int, float)) else "N/A"
+            }
+            
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+    
+    @app.route('/api/simple_metrics/<ticker>', methods=['GET'])
+    def simple_metrics(ticker):
+        try:
+            # Get historical price data
+            hist_data = get_stock_data_with_retry(ticker.upper())
+            
+            # Get current price
+            current_price = round(hist_data.iloc[-1].Close, 2)
+            
+            # Get fundamental data
+            fundamentals = get_fundamentals(ticker.upper())
+            
+            # Calculate RSI
+            rsi = calculate_RSI(ticker.upper())
+            
+            # Calculate MACD
+            macd, signal, hist = calculate_MACD(ticker.upper())
+            
+            # Build the response with only the requested metrics
+            result = {
+                "ticker": ticker.upper(),
+                "latest_price": current_price,
+                "peg_ratio": fundamentals.get("trailing_peg_ratio", "N/A"),
+                "pe_ratio": fundamentals.get("pe_ratio", "N/A"),
+                "pb_ratio": fundamentals.get("pb_ratio", "N/A"),
+                "ps_ratio": fundamentals.get("ps_ratio", "N/A"),
+                "roe": fundamentals.get("roe", "N/A"),
+                "rsi": round(rsi, 2) if isinstance(rsi, (int, float)) else "N/A",
+                "macd_line": round(macd, 2) if isinstance(macd, (int, float)) else "N/A"
             }
             
             return jsonify(result)
