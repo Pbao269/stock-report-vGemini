@@ -203,6 +203,18 @@ def get_stock_data(ticker, window):
 # Create Flask app instance at the module level
 app = Flask(__name__)
 
+# Add this new route
+@app.route('/')
+def home():
+    return jsonify({
+        "status": "success",
+        "message": "Stock Report API is running",
+        "endpoints": {
+            "stock_data": "/stock/<ticker>",
+            # ... list other available endpoints ...
+        }
+    })
+
 # Get environment variables with defaults
 BACKEND_URL_DEV = os.getenv('BACKEND_URL_DEV', 'http://localhost:5000')
 FRONTEND_URL_DEV = os.getenv('FRONTEND_URL_DEV', 'http://localhost:3001')
