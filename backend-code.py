@@ -92,29 +92,41 @@ def get_fundamentals(ticker):
         stock = yf.Ticker(ticker)
         info = stock.info
         
-        # Get P/E ratio
-        pe_ratio = info.get("trailingPE")
+        # Get P/E ratio - try multiple possible fields
+        pe_ratio = info.get("trailingPE") or info.get("forwardPE")
         
-        # Get trailing PEG ratio directly from yfinance
-        trailing_peg_ratio = info.get("trailingPegRatio")
+        # Get trailing PEG ratio - try multiple possible fields
+        trailing_peg_ratio = info.get("trailingPegRatio") or info.get("pegRatio")
         
- 
+        # Get P/S ratio - try multiple possible fields
+        ps_ratio = info.get("priceToSalesTrailing12Months") or info.get("ps1Year")
+        
+        # Get P/B ratio - try multiple possible fields
+        pb_ratio = info.get("priceToBook")
+        
+        # Get ROE - try multiple possible fields
+        roe = info.get("returnOnEquity") or info.get("roe")
+        
+        # Default values if the fields are not found or are None
+        default_value = 0.0
         
         return {
-            "pe_ratio": pe_ratio if isinstance(pe_ratio, (int, float)) else "N/A",
-            "pb_ratio": info.get("priceToBook", "N/A"),
-            "ps_ratio": info.get("priceToSalesTrailing12Months", "N/A"),
-            "trailing_peg_ratio": trailing_peg_ratio if isinstance(trailing_peg_ratio, (int, float)) else "N/A",
-            "roe": info.get("returnOnEquity", "N/A")
+            "pe_ratio": pe_ratio if isinstance(pe_ratio, (int, float)) else default_value,
+            "pb_ratio": pb_ratio if isinstance(pb_ratio, (int, float)) else default_value,
+            "ps_ratio": ps_ratio if isinstance(ps_ratio, (int, float)) else default_value,
+            "trailing_peg_ratio": trailing_peg_ratio if isinstance(trailing_peg_ratio, (int, float)) else default_value,
+            "roe": roe if isinstance(roe, (int, float)) else default_value
         }
     except Exception as e:
         print(f"Warning: Could not fetch fundamentals for {ticker}: {str(e)}")
+        # Return default values instead of "N/A"
+        default_value = 0.0
         return {
-            "pe_ratio": "N/A",
-            "pb_ratio": "N/A",
-            "ps_ratio": "N/A",
-            "peg_ratio": "N/A",
-            "roe": "N/A"
+            "pe_ratio": default_value,
+            "pb_ratio": default_value,
+            "ps_ratio": default_value,
+            "trailing_peg_ratio": default_value,
+            "roe": default_value
         }
 
 def get_stock_data(ticker, window):
@@ -244,6 +256,63 @@ if __name__ == "__main__":
             return jsonify(result)
         except Exception as e:
             return jsonify({"success": False, "error": str(e)})
+
+    @app.route('/api/multi_stock_metrics', methods=['POST'])
+    def api_multi_stock_metrics():
+        data = request.json
+        company_inputs = data.get('company_inputs', [])
+        
+        if not company_inputs or not isinstance(company_inputs, list):
+            return jsonify({"success": False, "error": "Please provide a list of company inputs in the 'company_inputs' field"})
+        
+        results = {}
+        overall_success = False
+        
+        for company_input in company_inputs:
+            try:
+                # Convert company name to ticker if needed
+                ticker = get_ticker_from_name(company_input)
+                
+                # Get historical price data
+                hist_data = get_stock_data_with_retry(ticker)
+                
+                # Get current price
+                current_price = round(hist_data.iloc[-1].Close, 2)
+                
+                # Get fundamental data
+                fundamentals = get_fundamentals(ticker)
+                
+                # Calculate RSI
+                rsi = calculate_RSI(ticker)
+                
+                # Calculate MACD
+                macd, signal, hist = calculate_MACD(ticker)
+                
+                # Add to results
+                results[ticker] = {
+                    "success": True,
+                    "ticker": ticker,
+                    "currentPrice": current_price,
+                    "PE": fundamentals.get("pe_ratio", "N/A"),
+                    "PB": fundamentals.get("pb_ratio", "N/A"),
+                    "PEG": fundamentals.get("trailing_peg_ratio", "N/A"),
+                    "PS": fundamentals.get("ps_ratio", "N/A"),
+                    "ROE": fundamentals.get("roe", "N/A"),
+                    "RSI": round(rsi, 2) if isinstance(rsi, (int, float)) else "N/A",
+                    "MACDLine": round(macd, 2) if isinstance(macd, (int, float)) else "N/A"
+                }
+                
+                overall_success = True
+            except Exception as e:
+                results[company_input] = {
+                    "success": False,
+                    "error": str(e)
+                }
+        
+        return jsonify({
+            "success": overall_success,  # True if at least one company was processed successfully
+            "data": results
+        })
     
     @app.route('/api/simple_metrics/<ticker>', methods=['GET'])
     def simple_metrics(ticker):
